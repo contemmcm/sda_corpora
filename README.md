@@ -1,12 +1,11 @@
-# SDA Corpus
+# SDA Corpora
 
-A domain specif corpus comprising the following materials:
+A domain specif corpora comprising the following materials:
 
 - [Ellen G. White Writings](https://m.egwwritings.org/en/)
-
+- [Adventist Review](http://www.adventistreview.org)
 
 ## Ongoing work
-- [Adventist Review](http://www.adventistreview.org)
 - Adventist World
 - Dialogue Magazine
 - Dynamic Steward
