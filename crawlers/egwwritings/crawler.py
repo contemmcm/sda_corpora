@@ -1,64 +1,45 @@
-"""
-This script is used to download all books and publications available at
-https://m.egwwritings.org/ using a multi-thread approach.
-
-Usage:
-
-$ python3 -u -m crawlers.egwwritings.crawler
-"""
-import glob
-import argparse
+import json
 import os
 import re
-import sys
-import json
-import threading
+
+from functools import lru_cache
+from multiprocessing import Pool
+from pathlib import Path
+
+from bs4 import BeautifulSoup
 
 import requests
 
-from bs4 import BeautifulSoup
-from slugify import slugify
-
-from .settings import BASE_URL, COOKIES, INDEX_DIRECTORY, DOWNLOAD_DIRECTORY
+from . import settings
 
 
 class BookDownloader:
-    """
-    Class for downloading a single book, all its pages.
-    """
 
-    def __init__(self, book, url, path):
-        self.title = book
-        self.url = BASE_URL + url
-        self.prefix = path
+    def __init__(self, book):
+        self.book = book
+    
+    def _ensure_directory_exists(self):
+        parent_path = os.path.dirname(self.book["Path"])
+        if not os.path.exists(parent_path):
+            Path(parent_path).mkdir( parents=True)
+
 
     def save_book(self):
         """
         Download and save a book to the file system.
         """
-        # Download book content
         content = self.fetch_book_content()
 
-        # Saving the downloaded content
-        book_id = os.path.basename(self.url)
-        book_title_slug = slugify(self.title)
-        download_dir = os.path.join(DOWNLOAD_DIRECTORY, self.prefix)
+        self._ensure_directory_exists()
 
-        # Creating download directory if it does not exist
-        if not os.path.isdir(download_dir):
-            os.mkdir(download_dir)
-
-        basename = f"{book_id}-{book_title_slug}.txt"
-        fpath = os.path.join(download_dir, basename)
-
-        with open(fpath, 'w', encoding="utf8") as fout:
+        with open(self.book["Path"], 'w', encoding="utf8") as fout:
             fout.write(content)
 
     def fetch_book_content(self):
         """
         Fetch the book content, going from page to page.
         """
-        url = self.url
+        url = self.book["Url"]
         content = ""
 
         while url:
@@ -71,9 +52,10 @@ class BookDownloader:
         """
         Download and parse a single page
         """
-        for attempt in range(1000):
+        n_max_attempts = 1000
+        for attempt in range(1, n_max_attempts):
             try:
-                page = requests.get(url, timeout=120, cookies=COOKIES)
+                page = requests.get(url, timeout=120)
                 break
             except requests.exceptions.ReadTimeout as err:
                 print(str(err), f"new attempt: {attempt}")
@@ -99,118 +81,28 @@ class BookDownloader:
         if not new_button or new_button.attrs['href'] == "#":
             return (content, None)
 
-        next_url = BASE_URL + new_button.attrs['href']
+        next_url = settings.BASE_URL + new_button.attrs['href']
 
         return content, next_url
 
 
-def create_corpus_threaded(input_obj, n_threads):
-    """
-    Download books using multi-thread approach.
-    """
-    if isinstance(input_obj, str):
-        # Download books from single index file
-        path = input_obj
-        with open(path, 'r', encoding="utf8") as fin:
-            books = json.loads(fin.read())
-    else:
-        books = input_obj
-
-    # Split books into n_threads
-    book_lists = split_book_list(books, n_threads)
-
-    # Creating download threads
-    threads = []
-    for book_list in book_lists:
-        thread = threading.Thread(target=download_book_list, args=(book_list,))
-        threads.append(thread)
-        thread.start()
-
-    # Wait threads to finish
-    for thread in threads:
-        thread.join()
+@lru_cache
+def load_indexes(fname=settings.INDEX_FILE):    
+    with open(fname, 'r', encoding="utf8") as fin:
+        return [json.loads(line) for line in fin.readlines()]
 
 
-def split_book_list(books, n_groups):
-    """
-    Split the book list into N groups.
-    """
-    if n_groups == 1:
-        return [books]
-
-    if len(books) < n_groups:
-        n_groups = len(books)
-
-    while (len(books) / n_groups) < 1:
-        n_groups -= 1
-
-    length, remainder = len(books) // n_groups, len(books) % n_groups
-    book_lists = []
-    start = 0
-    for i in range(n_groups):
-        end = start + length
-        if i < remainder:
-            end += 1
-        book_lists.append(books[start:end])
-        start = end
-
-    return book_lists
+def download_book(book):
+    BookDownloader(book).save_book()
 
 
-def download_book_list(book_list):
-    """
-    Download a list of books sequentially.
-    """
-    for book in book_list:
-        print(f'Downloading book "{book.get("book")}"')
-        downloader = BookDownloader(**book)
-        downloader.save_book()
+def start_or_resume_download(processes=1):
+    # selecting only books that have not been downloaded yet
+    books = [book for book in load_indexes() if not os.path.exists(book["Path"])]
 
-
-def load_combined_indexes():
-    """
-    Load all index files to memory
-    """
-    books = []
-    for file in glob.glob(os.path.join(INDEX_DIRECTORY, "*.json")):
-        with open(file, "r", encoding="utf8") as fin:
-            content = fin.read()
-            if content:
-                json_data = json.loads(content)
-                books.extend(json_data)
-    return books
-
-
-def main(*args):
-    """
-    Main function of the program.
-    """
-    parser = argparse.ArgumentParser(
-        description="Download books from https://m.egwwritings.org"
-    )
-    parser.add_argument(
-        "--n_threads",
-        type=int,
-        default=os.cpu_count(),
-        help="The number of threads to be used for the download"
-    )
-    parser.add_argument(
-        "--index", help="The index JSON file with a list of books"
-    )
-
-    # Parsing input arguments
-    arguments = parser.parse_args(*args)
-
-    if arguments.index:
-        create_corpus_threaded(
-            arguments.index, n_threads=os.cpu_count()
-        )
-    else:
-        books = load_combined_indexes()
-        create_corpus_threaded(
-            books, n_threads=os.cpu_count()
-        )
+    with Pool(processes) as p:
+        p.map(download_book, books)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    start_or_resume_download(processes=os.cpu_count())

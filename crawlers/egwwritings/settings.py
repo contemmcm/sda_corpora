@@ -4,21 +4,9 @@ downloading this corpus.
 """
 import os
 
-from decouple import config
-
-
 BASE_URL = "https://m.egwwritings.org"
-
-COOKIES = {
-    "phpsession": config("EGWWRITINGS_PHPSESSION")
-}
-
-INDEX_DIRECTORY = ".egwwritings_indexes"
 DOWNLOAD_DIRECTORY = os.path.join("corpora", "egwwritings")
-
-
-if not os.path.exists(INDEX_DIRECTORY):
-    os.makedirs(INDEX_DIRECTORY)
+INDEX_FILE = os.path.join(DOWNLOAD_DIRECTORY, "index.jsonl")
 
 if not os.path.exists(DOWNLOAD_DIRECTORY):
     os.makedirs(DOWNLOAD_DIRECTORY)
